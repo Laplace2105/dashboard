@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.env/
+.ipynb_checkpoints/
+# datos pesados: no subir a GitHub
+data set/limpio.csv
+data set/modelo.csv
+data set/Dataset__Noti_AT_No_Mort_SAT_0.csv
+# base de datos local del CRUD
+consultas.db
+s
