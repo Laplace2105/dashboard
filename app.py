@@ -27,6 +27,8 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
+import normalizacion as nz
+
 # ─────────────────────────────────────────────────────────────── CONFIGURACIÓN
 st.set_page_config(page_title="Accidentes de Trabajo · MTPE",
                    page_icon="🏭", layout="wide")
@@ -50,25 +52,35 @@ st.markdown(f"""
 
 # ───────────────────────────────────────────────────────────────── CARGA DE DATOS
 @st.cache_data
-def cargar_datos():
+def cargar_datos_crudos():
+    """Parquet tal cual. Solo lo necesita el puente hacia los .pkl, que
+    fueron entrenados con las cadenas originales sin normalizar."""
     return pd.read_parquet(os.path.join(DATA, "datos.parquet"))
 
 
 @st.cache_data
-def cargar_clusters():
-    ruta = os.path.join(DATA, "clusters_panel1.csv")
-    return pd.read_csv(ruta) if os.path.exists(ruta) else None
+def cargar_datos():
+    """Datos normalizados: vocabulario unificado 2012-2022 / 2023-2024,
+    acentos reparados, centinelas de dato faltante colapsados y banderas
+    de calidad (TARGET_FIABLE, PERIODO). Es la única fuente para la UI."""
+    return nz.normalizar_datos(cargar_datos_crudos())
 
 
 @st.cache_data
-def cargar_pronostico():
+def cargar_pronostico(_df):
     p = os.path.join(DATA, "pronostico_panel3.csv")
     m = os.path.join(DATA, "metricas_panel3.csv")
     if not os.path.exists(p):
         return None, None
-    pron = pd.read_csv(p, parse_dates=["PERIODO"])
+    pron = nz.normalizar_pronostico(pd.read_csv(p, parse_dates=["PERIODO"]), _df)
     met = pd.read_csv(m, index_col=0) if os.path.exists(m) else None
     return pron, met
+
+
+def acortar(texto, n=30):
+    """Etiqueta corta para ejes, sin cortar a medio carácter."""
+    texto = str(texto)
+    return texto if len(texto) <= n else texto[:n - 1].rstrip(" ,.") + "…"
 
 
 # Las 2 particiones temporales entrenadas en el notebook 03
@@ -86,84 +98,59 @@ def cargar_paquete(nombre_pkl):
     return joblib.load(ruta) if os.path.exists(ruta) else None
 
 
-def predecir(paquete, algoritmo, entrada):
-    """Reconstruye las features igual que en el entrenamiento y predice con el modelo elegido."""
+@st.cache_data
+def cargar_puente(nombre_pkl):
+    """Traductor canónico → texto crudo para el .pkl indicado.
+
+    Sustituye a la antigua cascada de `if 'ADM' in v` escrita a mano, que
+    tenía reglas equivocadas: mandaba 'APRISIONAMIENTO O ATRAPAMIENTO' a
+    'OTRAS FORMAS' (categoría con 36% de secuelas frente al 7% real) y
+    'AGRICULTOR' a 'PEON' cuando en el modelo AGRICULTOR es la categoría
+    base. Ahora el mapa se deriva del propio vocabulario de la partición,
+    así que no puede desincronizarse de los datos.
+    """
+    return nz.puente_modelo(cargar_datos_crudos(), cargar_paquete(nombre_pkl))
+
+
+def estacion_de(mes):
+    """Misma regla con la que se construyó la columna ESTACION del dataset."""
+    if mes in (12, 1, 2, 3): return "Verano"
+    if mes in (4, 5):        return "Otoño"
+    if mes in (6, 7, 8):     return "Invierno"
+    return "Primavera"
+
+
+def predecir(paquete, puente, algoritmo, entrada):
+    """Reconstruye las features igual que en el entrenamiento y predice.
+
+    `entrada` viene en vocabulario canónico; `puente` lo devuelve al texto
+    crudo con el que se generaron las columnas one-hot del modelo.
+    """
     mes = int(entrada["mes"])
-    g = paquete["tasa_global"]
     t = paquete["tasas"]
+    g = paquete["tasa_global"]
 
-    def estacion(m):
-        if m in (12, 1, 2, 3): return "VERANO"
-        if m in (4, 5):        return "OTONO"
-        if m in (6, 7, 8):     return "INVIERNO"
-        return "PRIMAVERA"
-
-    def normalize_val(cat, val):
-        v = str(val).strip()
-        if cat == 'ACTIVIDAD_ECONOMICA':
-            if 'ADM' in v or 'ADMINISTRAC' in v:
-                keys = [c for c in paquete['tasas']['ACTIVIDAD_ECONOMICA'] if 'ADMINIST' in c or 'ADM' in c]
-                return keys[0] if keys else v
-            if 'INMOBIL' in v or 'ALQ' in v:
-                return 'ACTIVIDADES INMOBILIARIAS, EMPRESARIALES Y DE ALQUILER'
-            if 'AGRICULT' in v or 'GANAD' in v:
-                return 'AGRICULTURA, GANADERA, CAZA Y SILVICULTURA'
-            if 'COMERCIO' in v:
-                return 'COMERCIO AL POR MAYOR Y AL POR MENOR, REP. VEHC. AUTOM.'
-            if 'CONSTRUCC' in v:
-                keys = [c for c in paquete['tasas']['ACTIVIDAD_ECONOMICA'] if 'CONSTRUCC' in c]
-                return keys[0] if keys else v
-            if 'EXPLOTAC' in v or 'MINAS' in v:
-                keys = [c for c in paquete['tasas']['ACTIVIDAD_ECONOMICA'] if 'MINAS' in c]
-                return keys[0] if keys else v
-            if 'FINANCIER' in v or 'INTERMEDI' in v:
-                keys = [c for c in paquete['tasas']['ACTIVIDAD_ECONOMICA'] if 'FINANCIER' in c]
-                return keys[0] if keys else v
-            if 'OTRAS ACT' in v or 'ORGANIZAC' in v:
-                return 'OTRAS ACTIV. SERV. COMUNITARIOS,SOCIALES Y PERSONALES'
-            if 'SUMIN' in v or 'ELECTRIC' in v:
-                return 'SUMINISTRO DE ELECTRICIDAD, GAS Y AGUA'
-            if 'TRANSP' in v or 'COMUN' in v:
-                return 'TRANSPORTE, ALMACENAMIENTO Y COMUNICACIONES'
-        elif cat == 'FORMA_DEL_ACCIDENTE_G':
-            if 'CADAS DE OBJETOS' in v: return 'CAIDA DE OBJETOS'
-            if 'CADAS DE PERSONAS' in v: return 'CAIDA DE PERSONAS A NIVEL'
-            if 'EXCESIVOS' in v: return 'ESFUERZOS FISICOS O FALSOS MOVIMIENTOS'
-            if 'APRISION' in v or 'CLASIFICADAS' in v: return 'OTRAS FORMAS'
-            if 'PISADAS SOBRE,' in v or 'PUNZO' in v: return 'GOLPES POR OBJETOS (EXCEPTO CAIDAS)'
-        elif cat == 'AGENTE_CAUSANTE_G':
-            if 'NO CLASIFICADOS' in v or 'AMBIENTE' in v or 'DESCONOCIDO' in v or 'APARATOS' in v:
-                return 'OTROS'
-            if 'MATERIALES' in v: return 'MATERIAS PRIMAS'
-            if 'MQUINAS' in v: return 'MAQUINAS Y EQUIPOS EN GENERAL'
-        elif cat == 'CATEGORIA_OCUPACIONAL':
-            if 'AGRICULTOR' in v: return 'PEON'
-            if 'JEFE DE PLANTA' in v: return 'FUNCIONARIO'
-            if 'TECNICO' in v: return 'EMPLEADO'
-            if 'INDEPENDIENTE' in v: return 'OTROS'
-        return v
-
-    sector_norm = normalize_val('ACTIVIDAD_ECONOMICA', entrada['sector'])
-    forma_norm = normalize_val('FORMA_DEL_ACCIDENTE_G', entrada['forma'])
-    agente_norm = normalize_val('AGENTE_CAUSANTE_G', entrada['agente'])
-    ocup_norm = normalize_val('CATEGORIA_OCUPACIONAL', entrada['ocupacion'])
-    region_norm = normalize_val('REGION', entrada['region'])
+    def crudo(columna, valor):
+        # Los selectores solo ofrecen valores del vocabulario del modelo,
+        # así que un KeyError aquí es un fallo real, no un caso de usuario.
+        return puente[columna][valor]
 
     fila = {
         "MES_N": mes,
         "TRIMESTRE": (mes - 1) // 3 + 1,
         "ES_FIN_DE_ANIO": int(mes in (11, 12)),
-        "TASA_SECTOR": t["ACTIVIDAD_ECONOMICA"].get(sector_norm, g),
-        "TASA_REGION": t["REGION"].get(region_norm, g),
-        "TASA_FORMA":  t["FORMA_DEL_ACCIDENTE_G"].get(forma_norm, g),
-        "REGION": region_norm,
-        "ACTIVIDAD_ECONOMICA": sector_norm,
-        "SEXO": entrada["sexo"],
-        "CATEGORIA_OCUPACIONAL": ocup_norm,
-        "FORMA_DEL_ACCIDENTE_G": forma_norm,
-        "AGENTE_CAUSANTE_G": agente_norm,
-        "ESTACION": estacion(mes),
+        "REGION": crudo("REGION", entrada["region"]),
+        "ACTIVIDAD_ECONOMICA": crudo("ACTIVIDAD_ECONOMICA", entrada["sector"]),
+        "SEXO": crudo("SEXO", entrada["sexo"]),
+        "CATEGORIA_OCUPACIONAL": crudo("CATEGORIA_OCUPACIONAL", entrada["ocupacion"]),
+        "FORMA_DEL_ACCIDENTE_G": crudo("FORMA_DEL_ACCIDENTE_G", entrada["forma"]),
+        "AGENTE_CAUSANTE_G": crudo("AGENTE_CAUSANTE_G", entrada["agente"]),
+        "ESTACION": crudo("ESTACION", estacion_de(mes)),
     }
+    fila["TASA_SECTOR"] = t["ACTIVIDAD_ECONOMICA"].get(fila["ACTIVIDAD_ECONOMICA"], g)
+    fila["TASA_REGION"] = t["REGION"].get(fila["REGION"], g)
+    fila["TASA_FORMA"] = t["FORMA_DEL_ACCIDENTE_G"].get(fila["FORMA_DEL_ACCIDENTE_G"], g)
+
     CAT = ["REGION", "ACTIVIDAD_ECONOMICA", "SEXO", "CATEGORIA_OCUPACIONAL",
            "FORMA_DEL_ACCIDENTE_G", "AGENTE_CAUSANTE_G", "ESTACION"]
 
@@ -198,19 +185,37 @@ def crud_crear(d):
     con.close()
 
 
+# Columna del CRUD → columna del dataset, para normalizar lo que ya está
+# guardado. Las consultas creadas antes de unificar el vocabulario tienen
+# el texto crudo ('CONSTRUCCIÎ'), y se mostraban así junto a las nuevas.
+CAMPOS_CRUD = {
+    "region": "REGION", "sector": "ACTIVIDAD_ECONOMICA", "sexo": "SEXO",
+    "ocupacion": "CATEGORIA_OCUPACIONAL", "forma": "FORMA_DEL_ACCIDENTE_G",
+    "agente": "AGENTE_CAUSANTE_G",
+}
+
+
 def crud_listar():
     con = sqlite3.connect(DB)
-    df = pd.read_sql("SELECT * FROM consultas ORDER BY id DESC", con)
+    consultas = pd.read_sql("SELECT * FROM consultas ORDER BY id DESC", con)
     con.close()
-    return df
+    for campo, columna in CAMPOS_CRUD.items():
+        consultas[campo] = consultas[campo].map(
+            lambda v, c=columna: nz.canonico(v, c) if pd.notna(v) else v)
+    return consultas
 
 
 def crud_actualizar(cid, campos):
+    """Actualiza una consulta. La predicción se reescribe junto con las
+    entradas: dejarla como estaba producía filas donde la región decía una
+    cosa y la probabilidad correspondía a otra."""
     con = sqlite3.connect(DB)
     con.execute("""UPDATE consultas SET region=?,sector=?,sexo=?,ocupacion=?,
-                   forma=?,agente=?,mes=?,timestamp=? WHERE id=?""",
+                   forma=?,agente=?,mes=?,prediccion=?,probabilidad=?,timestamp=?
+                   WHERE id=?""",
                 (campos["region"], campos["sector"], campos["sexo"], campos["ocupacion"],
                  campos["forma"], campos["agente"], campos["mes"],
+                 campos["prediccion"], campos["probabilidad"],
                  datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cid))
     con.commit()
     con.close()
@@ -225,16 +230,46 @@ def crud_eliminar(cid):
 
 init_db()
 df = cargar_datos()
+COBERTURA = nz.cobertura_temporal(df)
+ANIO_INI, ANIO_FIN = nz.ANIOS_TARGET_FIABLE
+df_fiable = df[df["TARGET_FIABLE"]]
+
+
+def n_categorias(columna, datos=None):
+    """Categorías reales: el centinela de dato faltante no es una categoría."""
+    valores = (df if datos is None else datos)[columna].astype(str)
+    return int(valores[valores != nz.NO_DETERMINADO].nunique())
+
 
 # ─────────────────────────────────────────────────────────────────────── HEADER
 st.title("🏭 Accidentes de Trabajo en el Perú")
-st.caption("MTPE · Sistema SAT · 2012–2024  |  Minería de Datos · UNMSM-FISI · 2026-I")
+st.caption(f"MTPE · Sistema SAT · {COBERTURA['inicio']} a {COBERTURA['fin']}"
+           "  |  Minería de Datos · UNMSM-FISI · 2026-I")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Accidentes analizados", f"{len(df):,}")
-c2.metric("Con secuela permanente", f"{df['PERMANENTE'].mean()*100:.1f}%")
-c3.metric("Regiones", df["REGION"].nunique())
-c4.metric("Sectores económicos", df["ACTIVIDAD_ECONOMICA"].nunique())
+# La tasa se calcula SOLO sobre los años en que el target es comparable.
+# Sobre los 13 años daba 9.0%, un promedio de tres codificaciones distintas.
+c2.metric(f"Con secuela permanente ({ANIO_INI}–{ANIO_FIN})",
+          f"{df_fiable['PERMANENTE'].mean()*100:.1f}%",
+          help="Solo 2018-2022: fuera de esos años la columna de origen "
+               "cambió de catálogo y la tasa cae a <2%, lo que no es un "
+               "fenómeno real sino un fallo de codificación.")
+c3.metric("Regiones", n_categorias("REGION"))
+c4.metric("Sectores económicos", n_categorias("ACTIVIDAD_ECONOMICA"))
+
+# Avisos de integridad: el dataset no cubre lo que su rango sugiere.
+if len(COBERTURA["meses_faltantes"]):
+    faltan = ", ".join(str(m) for m in COBERTURA["meses_faltantes"])
+    st.warning(f"⚠️ **Cobertura incompleta.** Faltan {len(COBERTURA['meses_faltantes'])} "
+               f"meses en el dataset: {faltan}. Los años "
+               f"{', '.join(map(str, COBERTURA['anios_parciales']))} son parciales, "
+               "así que sus totales no son comparables con los años completos.")
+
+_sin_mapear = nz.valores_no_mapeados(cargar_datos_crudos())
+if _sin_mapear:
+    st.error("⚠️ Hay valores sin regla de normalización (se muestran tal cual). "
+             f"Añádelos a `normalizacion.py`: {_sin_mapear}")
 
 st.markdown("---")
 
@@ -247,15 +282,23 @@ TABS = st.tabs(["📊 Panel 1 · EDA + Clustering",
 with TABS[0]:
     st.header("Panel 1 · Análisis Exploratorio y Clustering")
 
-    dfp = df[(df["ANIOS"] >= 2018) & (df["ANIOS"] <= 2022)]
+    # Panel 1 usa la ventana en que el target es fiable (2018-2022).
+    dfp = df_fiable
+    st.caption(f"Ventana {ANIO_INI}–{ANIO_FIN}: los únicos años en que la columna "
+               "PERMANENTE es comparable. Ojo: 2022 solo tiene enero–mayo en el "
+               "dataset, así que aporta menos volumen que un año completo.")
+
+    # Excluye el centinela: 'No determinado' no es un sector ni una forma,
+    # y encabezaba los rankings como si lo fuera.
+    dfp_sector = dfp[dfp["ACTIVIDAD_ECONOMICA"].astype(str) != nz.NO_DETERMINADO]
 
     # ---------- EDA ----------
     st.subheader("Análisis exploratorio")
     e1, e2 = st.columns(2)
 
     with e1:
-        top = dfp["ACTIVIDAD_ECONOMICA"].value_counts().head(8)
-        fig = px.bar(x=top.values, y=[t[:32] for t in top.index], orientation="h",
+        top = dfp_sector["ACTIVIDAD_ECONOMICA"].value_counts().head(8)
+        fig = px.bar(x=top.values, y=[acortar(t) for t in top.index], orientation="h",
                      color=top.values, color_continuous_scale="Reds",
                      title="Sectores con más accidentes")
         fig.update_layout(template=TEMPLATE, height=340, showlegend=False,
@@ -263,10 +306,10 @@ with TABS[0]:
         st.plotly_chart(fig, use_container_width=True)
 
     with e2:
-        tasa = (dfp.groupby("ACTIVIDAD_ECONOMICA", observed=True)["PERMANENTE"]
-                   .agg(["mean", "size"]))
+        tasa = (dfp_sector.groupby("ACTIVIDAD_ECONOMICA", observed=True)["PERMANENTE"]
+                          .agg(["mean", "size"]))
         tasa = tasa[tasa["size"] >= 500].sort_values("mean", ascending=False).head(8)
-        fig = px.bar(x=tasa["mean"] * 100, y=[t[:32] for t in tasa.index], orientation="h",
+        fig = px.bar(x=tasa["mean"] * 100, y=[acortar(t) for t in tasa.index], orientation="h",
                      color=tasa["mean"] * 100, color_continuous_scale="Reds",
                      title="% de secuelas PERMANENTES por sector")
         fig.add_vline(x=dfp["PERMANENTE"].mean() * 100, line_dash="dash", line_color=GRIS)
@@ -277,16 +320,21 @@ with TABS[0]:
     # ---------- Perfil numérico por unidad región×sector (base del EDA numérico y del clustering) ----------
     @st.cache_data
     def perfil_numerico(dfp):
+        # Sin el centinela: una unidad "No determinado × Lima" no es un
+        # perfil de siniestralidad interpretable.
+        dfp = dfp[(dfp["ACTIVIDAD_ECONOMICA"].astype(str) != nz.NO_DETERMINADO)
+                  & (dfp["REGION"].astype(str) != nz.NO_DETERMINADO)]
         g = dfp.groupby(["REGION", "ACTIVIDAD_ECONOMICA"], observed=True)
         p = pd.DataFrame({
             "n_accidentes": g.size(),
             "tasa_permanente": g["PERMANENTE"].mean() * 100,
-            "prop_masculino": g["SEXO"].apply(lambda s: (s == "MASCULINO").mean() * 100),
+            "prop_masculino": g["SEXO"].apply(lambda s: (s == "Masculino").mean() * 100),
             "concentracion_forma": g["FORMA_DEL_ACCIDENTE_G"].apply(
                 lambda s: s.value_counts(normalize=True).iloc[0] * 100),
         }).reset_index()
         p = p[p["n_accidentes"] >= 50].reset_index(drop=True)
-        p["unidad"] = p["ACTIVIDAD_ECONOMICA"].astype(str).str[:22] + " · " + p["REGION"].astype(str)
+        p["unidad"] = (p["ACTIVIDAD_ECONOMICA"].astype(str).map(lambda t: acortar(t, 24))
+                       + " · " + p["REGION"].astype(str))
         return p
 
     perfil = perfil_numerico(dfp)
@@ -375,21 +423,9 @@ with TABS[0]:
     k = col_k.slider("Número de clusters (k)", 2, 8, 3,
                      help="Modifica k y observa cómo cambia la silueta")
 
-    @st.cache_data
-    def construir_perfil(dfp):
-        g = dfp.groupby(["REGION", "ACTIVIDAD_ECONOMICA"], observed=True)
-        p = pd.DataFrame({
-            "n_accidentes": g.size(),
-            "tasa_permanente": g["PERMANENTE"].mean() * 100,
-            "prop_masculino": g["SEXO"].apply(lambda s: (s == "MASCULINO").mean() * 100),
-            "concentracion_forma": g["FORMA_DEL_ACCIDENTE_G"].apply(
-                lambda s: s.value_counts(normalize=True).iloc[0] * 100),
-        }).reset_index()
-        p = p[p["n_accidentes"] >= 50].reset_index(drop=True)
-        p["unidad"] = p["ACTIVIDAD_ECONOMICA"].astype(str).str[:22] + " · " + p["REGION"].astype(str)
-        return p
-
-    perfil = construir_perfil(dfp)
+    # Mismo perfil que arriba: una sola definición evita que el EDA y el
+    # clustering se describan sobre poblaciones distintas.
+    perfil = perfil_numerico(dfp)
     FEATURES = ["tasa_permanente", "prop_masculino", "concentracion_forma"]
     X = StandardScaler().fit_transform(perfil[FEATURES])
 
@@ -471,6 +507,8 @@ with TABS[1]:
                  "`models/modelo_p0.pkl` y `modelo_p1.pkl`.")
         st.stop()
 
+    puente = cargar_puente(PARTICIONES[nombre_part])
+
     # ══ COMBOBOX 2: algoritmo (los 5 modelos) ══
     algoritmo = col_a.selectbox("🤖 Algoritmo", list(paquete["modelos"].keys()),
                                 help="Los 5 algoritmos entrenados con esta partición")
@@ -546,21 +584,30 @@ with TABS[1]:
     st.subheader("🔮 Predice un caso")
     st.caption(f"Usa el algoritmo **{algoritmo}** de la partición **{nombre_part}**.")
 
+    # Los selectores se llenan con el vocabulario de la PARTICIÓN, no con el
+    # del dataset completo. Antes ofrecían las 25 categorías de los 13 años;
+    # al elegir una que el modelo nunca vio (p. ej. 'Punzocortantes', que solo
+    # existe desde 2023) el reindex la convertía en ceros y el modelo predecía
+    # sobre la categoría base sin avisar.
+    def opciones(columna):
+        return sorted(puente[columna].keys())
+
     p1, p2, p3 = st.columns(3)
-    v_region = p1.selectbox("Región", sorted(df["REGION"].astype(str).unique()), key="p2_reg")
-    v_sector = p1.selectbox("Sector económico", sorted(df["ACTIVIDAD_ECONOMICA"].astype(str).unique()), key="p2_sec")
-    v_sexo = p2.selectbox("Sexo", sorted(df["SEXO"].astype(str).unique()), key="p2_sex")
-    v_ocup = p2.selectbox("Categoría ocupacional", sorted(df["CATEGORIA_OCUPACIONAL"].astype(str).unique()), key="p2_ocu")
-    v_forma = p3.selectbox("Forma del accidente", sorted(df["FORMA_DEL_ACCIDENTE_G"].astype(str).unique()), key="p2_for")
-    v_agente = p3.selectbox("Agente causante", sorted(df["AGENTE_CAUSANTE_G"].astype(str).unique()), key="p2_age")
+    v_region = p1.selectbox("Región", opciones("REGION"), key="p2_reg")
+    v_sector = p1.selectbox("Sector económico", opciones("ACTIVIDAD_ECONOMICA"), key="p2_sec")
+    v_sexo = p2.selectbox("Sexo", opciones("SEXO"), key="p2_sex")
+    v_ocup = p2.selectbox("Categoría ocupacional", opciones("CATEGORIA_OCUPACIONAL"), key="p2_ocu")
+    v_forma = p3.selectbox("Forma del accidente", opciones("FORMA_DEL_ACCIDENTE_G"), key="p2_for")
+    v_agente = p3.selectbox("Agente causante", opciones("AGENTE_CAUSANTE_G"), key="p2_age")
     v_mes = st.slider("Mes", 1, 12, 6, key="p2_mes")
     umbral = st.slider("Umbral de decisión", 0.1, 0.9, 0.5, 0.05,
                        help="Bájalo para detectar más casos graves (↑recall, ↓precisión)")
 
     if st.button("Predecir", type="primary"):
-        prob = predecir(paquete, algoritmo, dict(region=v_region, sector=v_sector, sexo=v_sexo,
-                                                 ocupacion=v_ocup, forma=v_forma,
-                                                 agente=v_agente, mes=v_mes))
+        prob = predecir(paquete, puente, algoritmo,
+                        dict(region=v_region, sector=v_sector, sexo=v_sexo,
+                             ocupacion=v_ocup, forma=v_forma,
+                             agente=v_agente, mes=v_mes))
         es_perm = prob >= umbral
         r1, r2 = st.columns([1, 2])
         r1.metric("Probabilidad de secuela permanente", f"{prob*100:.1f}%")
@@ -576,6 +623,9 @@ with TABS[1]:
             "prediccion": "PERMANENTE" if es_perm else "NO PERMANENTE",
             "probabilidad": round(float(prob), 4),
         }
+        # El Panel 4 los necesita para recalcular si se edita la consulta.
+        st.session_state["contexto_prediccion"] = {
+            "particion": nombre_part, "algoritmo": algoritmo, "umbral": umbral}
         st.info("💾 Ve al **Panel 4** para guardar esta consulta.")
 
 
@@ -583,12 +633,23 @@ with TABS[1]:
 with TABS[2]:
     st.header("Panel 3 · Pronóstico de accidentes mensuales")
 
-    pron, met = cargar_pronostico()
+    pron, met = cargar_pronostico(df)
     if pron is None:
         st.error("Falta `data set/pronostico_panel3.csv`. Ejecuta el notebook 05 primero.")
     else:
-        hist = pron.dropna(subset=["accidentes"])
+        imputados = pron[pron["IMPUTADO"]]
+        # Los meses sin respaldo en el dataset se descartan del histórico:
+        # eran una interpolación lineal (+36.5 accidentes exactos cada mes,
+        # con conteos fraccionarios) que se dibujaba como dato observado.
+        hist = pron[pron["accidentes"].notna() & ~pron["IMPUTADO"]]
         fut = pron.dropna(subset=["pronostico"])
+
+        if len(imputados):
+            meses = ", ".join(imputados["PERIODO"].dt.strftime("%Y-%m"))
+            st.warning(
+                f"⚠️ Se ocultaron **{len(imputados)} meses rellenados por interpolación** "
+                f"({meses}): no existen en el dataset y no son observaciones reales. "
+                "El corte se ve como un hueco en la serie.")
 
         if met is not None:
             mejor = met.index[0]
@@ -597,21 +658,34 @@ with TABS[2]:
             k2.metric("MAPE", f"{met.loc[mejor, 'MAPE (%)']:.2f}%",
                       delta="cumple meta (≤10%)" if met.loc[mejor, "MAPE (%)"] <= 10 else None)
             k3.metric("RMSE", f"{met.loc[mejor, 'RMSE']:.0f} accidentes")
+            if len(imputados):
+                st.caption("⚠️ MAPE y RMSE vienen del notebook 05, que evaluó sobre la "
+                           "serie **con** los meses interpolados. Hay que recalcularlos "
+                           "sobre la serie observada para que sean válidos.")
 
-        # Serie + tendencia + pronóstico
-        s = hist.set_index("PERIODO")["accidentes"]
+        # Serie + tendencia + pronóstico.
+        # Se reindexa a meses continuos para que el hueco 2022-06/12 aparezca
+        # como corte y Plotly no una 2022-05 con 2023-01 en línea recta.
+        s = (hist.set_index("PERIODO")["accidentes"]
+                 .reindex(pd.date_range(hist["PERIODO"].min(),
+                                        hist["PERIODO"].max(), freq="MS")))
+        # Sin min_periods: la tendencia también se corta en el hueco en vez
+        # de trazar una media sobre meses que no existen.
         tend = s.rolling(12, center=True).mean()
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=s.index, y=s.values, name="Histórico",
+                                 connectgaps=False,
                                  line=dict(color=GRANATE, width=1.6)))
         fig.add_trace(go.Scatter(x=tend.index, y=tend.values, name="Tendencia (MM-12)",
+                                 connectgaps=False,
                                  line=dict(color=DORADO, width=3)))
         fig.add_trace(go.Scatter(x=fut["PERIODO"], y=fut["pronostico"], name="Pronóstico",
                                  mode="lines+markers",
                                  line=dict(color=VERDE, width=3, dash="dash"),
                                  marker=dict(size=9)))
-        fig.add_vline(x=s.index[-1], line_dash="dot", line_color=GRIS)
+        # Como cadena ISO: es la forma que plotly interpreta igual en 5.x y 6.x.
+        fig.add_vline(x=s.index[-1].strftime("%Y-%m-%d"), line_dash="dot", line_color=GRIS)
         fig.update_layout(template=TEMPLATE, height=440,
                           title="Accidentes por mes: histórico, tendencia y pronóstico",
                           yaxis_title="accidentes / mes",
@@ -650,7 +724,7 @@ with TABS[3]:
     else:
         cc = st.columns(4)
         cc[0].write(f"**Región:** {ult['region']}")
-        cc[1].write(f"**Sector:** {ult['sector'][:24]}")
+        cc[1].write(f"**Sector:** {acortar(ult['sector'], 24)}")
         cc[2].write(f"**Predicción:** {ult['prediccion']}")
         cc[3].write(f"**Probabilidad:** {ult['probabilidad']*100:.1f}%")
         if st.button("💾 Guardar esta consulta", type="primary"):
@@ -667,7 +741,9 @@ with TABS[3]:
         st.info("Aún no hay consultas guardadas.")
     else:
         vista = consultas.copy()
-        vista["probabilidad"] = (vista["probabilidad"] * 100).round(1).astype(str) + "%"
+        # Formateo tolerante a NULL: `(None * 100)` producía la cadena "nan%".
+        vista["probabilidad"] = vista["probabilidad"].map(
+            lambda p: f"{p*100:.1f}%" if pd.notna(p) else "—")
         st.dataframe(vista, use_container_width=True, hide_index=True)
 
         st.markdown("---")
@@ -676,18 +752,52 @@ with TABS[3]:
         # ---------- UPDATE ----------
         with u1:
             st.subheader("✏️ Editar")
+            # Se reutiliza la partición/algoritmo con que se hizo la predicción
+            # original, para que el valor recalculado sea comparable.
+            ctx = st.session_state.get("contexto_prediccion", {})
+            part_edit = ctx.get("particion", next(iter(PARTICIONES)))
+            paq_edit = cargar_paquete(PARTICIONES[part_edit])
+            puente_edit = cargar_puente(PARTICIONES[part_edit])
+            alg_edit = ctx.get("algoritmo", next(iter(paq_edit["modelos"])))
+            umbral_edit = ctx.get("umbral", 0.5)
+
             cid = st.selectbox("Consulta a editar", consultas["id"].tolist(), key="edit_id")
             fila = consultas[consultas["id"] == cid].iloc[0]
-            n_region = st.selectbox("Región", sorted(df["REGION"].astype(str).unique()),
-                                    index=sorted(df["REGION"].astype(str).unique()).index(fila["region"])
-                                    if fila["region"] in df["REGION"].astype(str).values else 0,
-                                    key="edit_reg")
+
+            regiones = sorted(puente_edit["REGION"].keys())
+            n_region = st.selectbox(
+                "Región", regiones,
+                index=regiones.index(fila["region"]) if fila["region"] in regiones else 0,
+                key="edit_reg")
             n_mes = st.slider("Mes", 1, 12, int(fila["mes"]), key="edit_mes")
+            st.caption(f"Se recalculará con **{alg_edit}** · {part_edit} · umbral "
+                       f"{umbral_edit*100:.0f}%")
+
             if st.button("Actualizar"):
-                crud_actualizar(cid, {"region": n_region, "sector": fila["sector"],
-                                      "sexo": fila["sexo"], "ocupacion": fila["ocupacion"],
-                                      "forma": fila["forma"], "agente": fila["agente"],
-                                      "mes": n_mes})
+                campos = {"region": n_region, "sector": fila["sector"],
+                          "sexo": fila["sexo"], "ocupacion": fila["ocupacion"],
+                          "forma": fila["forma"], "agente": fila["agente"],
+                          "mes": n_mes}
+                # Una consulta guardada con vocabulario que esta partición no
+                # conoce no se puede reevaluar: se marca en vez de inventar.
+                desconocidos = [c for c, col in CAMPOS_CRUD.items()
+                                if campos[c] not in puente_edit[col]]
+                if desconocidos:
+                    campos["prediccion"] = "NO RECALCULABLE"
+                    campos["probabilidad"] = None
+                    st.warning("Guardado sin probabilidad: "
+                               f"{', '.join(desconocidos)} no existe(n) en el "
+                               f"vocabulario de la partición {part_edit}.")
+                else:
+                    prob_edit = predecir(paq_edit, puente_edit, alg_edit,
+                                         dict(region=campos["region"], sector=campos["sector"],
+                                              sexo=campos["sexo"], ocupacion=campos["ocupacion"],
+                                              forma=campos["forma"], agente=campos["agente"],
+                                              mes=campos["mes"]))
+                    campos["prediccion"] = ("PERMANENTE" if prob_edit >= umbral_edit
+                                            else "NO PERMANENTE")
+                    campos["probabilidad"] = round(float(prob_edit), 4)
+                crud_actualizar(cid, campos)
                 st.success(f"Consulta #{cid} actualizada ✓")
                 st.rerun()
 

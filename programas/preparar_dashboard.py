@@ -7,10 +7,14 @@ Ejecutar UNA VEZ, después de correr los notebooks 02, 03, 04 y 05.
 Convierte limpio.csv (76 MB) → datos.parquet (~1 MB) para que quepa en GitHub.
 """
 import os
+import sys
+
 import pandas as pd
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(BASE, "data set")
+sys.path.insert(0, BASE)
+import normalizacion as nz  # noqa: E402
 
 COLS = ["ANIOS", "MES_N", "REGION", "ACTIVIDAD_ECONOMICA", "SEXO",
         "CATEGORIA_OCUPACIONAL", "FORMA_DEL_ACCIDENTE_G", "AGENTE_CAUSANTE_G",
@@ -18,6 +22,23 @@ COLS = ["ANIOS", "MES_N", "REGION", "ACTIVIDAD_ECONOMICA", "SEXO",
 
 print("Leyendo limpio.csv ...")
 df = pd.read_csv(os.path.join(DATA, "limpio.csv"), usecols=COLS)
+
+# El parquet se guarda SIN normalizar a propósito: los .pkl del Panel 2 se
+# entrenaron con estas cadenas y sus columnas one-hot están congeladas.
+# La normalización se aplica al cargar (app.py -> nz.normalizar_datos) y el
+# camino de vuelta lo da nz.puente_modelo. Lo que sí se comprueba aquí es
+# que el catálogo de normalizacion.py cubra todo lo que trae el CSV; si el
+# MTPE vuelve a cambiar de codificación, salta en este punto y no como
+# categorías duplicadas dentro del dashboard.
+sin_mapear = nz.valores_no_mapeados(df)
+if sin_mapear:
+    print("\n!! Valores sin regla de normalización. Añádelos a normalizacion.py:")
+    for col, valores in sin_mapear.items():
+        print(f"   {col}:")
+        for v in valores:
+            print(f"      [{nz.clave(v)}]  <- {v!r}")
+    sys.exit(1)
+print("OK  catálogo de normalización cubre todos los valores")
 
 for c in df.columns:
     if df[c].dtype == object:

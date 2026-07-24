@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "PowerShell($c = Get-Command python,python3,py -ErrorAction SilentlyContinue; $c | Select-Object Name,Source; Get-ChildItem \"$env:LOCALAPPDATA\\\\Programs\\\\Python\" -ErrorAction SilentlyContinue | Select-Object Name)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import pandas, sklearn, joblib; print\\(pandas.__version__, sklearn.__version__\\)\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect1.py\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect2.py\" 2>&1 | Select-Object -First 160)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect3.py\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect4.py\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect5.py\")",
+      "Bash(grep -o 'df\\\\[\\\\\\\\\"[A-Z_]*\\\\\\\\\"\\\\]\\\\.isin' 02_preparacion_accidentes_trabajo.ipynb)",
+      "Bash(cd \"c:/Users/Richard/Desktop/Nueva carpeta/minería/dashboard\" && cat .gitignore && echo \"=== archivos en data set ===\" && ls -la \"data set/\" && echo \"=== crudos? ===\" && ls -la .. 2>/dev/null | head -30)",
+      "Read(//c/Users/Richard/Desktop/Nueva carpeta/minería/**)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\slugs.py\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\inspect6.py\" 2>$null)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_norm.py\" 2>$null)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import plotly, streamlit; print\\('plotly', plotly.__version__\\); print\\('streamlit', streamlit.__version__\\)\"; Get-Content \"c:\\\\Users\\\\Richard\\\\Desktop\\\\Nueva carpeta\\\\minería\\\\dashboard\\\\requirements.txt\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_e2e.py\" 2>$null)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_base.py\" 2>$null)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_e2e.py\" 2>$null | Select-String -NotMatch \"dummies huerfanos\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_impacto.py\" 2>$null)",
+      "PowerShell(cd \"c:\\\\Users\\\\Richard\\\\Desktop\\\\Nueva carpeta\\\\minería\\\\dashboard\"; & \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m py_compile app.py normalizacion.py; if \\($?\\) { \"COMPILA OK\" })",
+      "PowerShell(cd \"c:\\\\Users\\\\Richard\\\\Desktop\\\\Nueva carpeta\\\\minería\\\\dashboard\"; & \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m streamlit run app.py --server.headless true --server.port 8599 --logger.level info 2>&1 | Out-File -FilePath \"$env:TEMP\\\\st_run.log\" -Encoding utf8)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8599/)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" \"C:\\\\Users\\\\Richard\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Richard-Desktop-Nueva-carpeta-miner-a-dashboard\\\\e0902630-d824-4499-ae7d-068be22e4dda\\\\scratchpad\\\\test_app.py\" 2>$null)",
+      "PowerShell(cd \"c:\\\\Users\\\\Richard\\\\Desktop\\\\Nueva carpeta\\\\minería\\\\dashboard\"; & \"$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -m streamlit run app.py --server.port 8501 2>&1)"
+    ]
+  }
+}
